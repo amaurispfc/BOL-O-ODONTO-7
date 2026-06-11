@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bolão do Brasil — Copa 2026</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0a1f14; }
+    input[type=number]::-webkit-inner-spin-button,
+    input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type=number] { -moz-appearance: textfield; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+const { useState, useEffect } = React;
+
+const BIN_ID = "6a2a0581f5f4af5e29dbe05d";
+const API_KEY = "$2a$10$IUhAT0EZllptSfVvbvjIAu3j70I0PfPhxNUrmIwcj67rCkap3RZ7q";
+const BIN_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
+
+const JOGOS = [
+  { id: "g1", fase: "Fase de Grupos — Rodada 1", data: "13/06 (sáb) · 19h", local: "MetLife Stadium, Nova Jersey", mandante: "Brasil", visitante: "Marrocos", bandeiraMandante: "🇧🇷", bandeiraVisitante: "🇲🇦" },
+  { id: "g2", fase: "Fase de Grupos — Rodada 2", data: "19/06 (sex) · 21h30", local: "Lincoln Financial Field, Filadélfia", mandante: "Brasil", visitante: "Haiti", bandeiraMandante: "🇧🇷", bandeiraVisitante: "🇭🇹" },
+  { id: "g3", fase: "Fase de Grupos — Rodada 3", data: "24/06 (qua) · 19h", local: "Hard Rock Stadium, Miami", mandante: "Brasil", visitante: "Escócia", bandeiraMandante: "🇧🇷", bandeiraVisitante: "🏴󠁧󠁢󠁳󠁣󠁴󠁿" },
+  { id: "o16", fase: "Oitavas de Final", data: "A definir", local: "A definir", mandante: "Brasil", visitante: "A definir", bandeiraMandante: "🇧🇷", bandeiraVisitante: "❓", eliminatorio: true },
+  { id: "q", fase: "Quartas de Final", data: "A definir", local: "A definir", mandante: "Brasil", visitante: "A definir", bandeiraMandante: "🇧🇷", bandeiraVisitante: "❓", eliminatorio: true },
+  { id: "sf", fase: "Semifinal", data: "A definir", local: "A definir", mandante: "Brasil", visitante: "A definir", bandeiraMandante: "🇧🇷", bandeiraVisitante: "❓", eliminatorio: true },
+  { id: "f", fase: "Final", data: "19/07 (dom)", local: "MetLife Stadium, Nova Jersey", mandante: "Brasil", visitante: "A definir", bandeiraMandante: "🇧🇷", bandeiraVisitante: "❓", eliminatorio: true },
+];
+
+const PARTICIPANTES_DEFAULT = ["Participante 1","Participante 2","Participante 3","Participante 4","Participante 5","Participante 6"];
+const PONTUACAO = { placar_exato: 5, vencedor_gols: 3, vencedor: 1 };
+const TABS_ADMIN = ["Palpites","Resultados","Ranking","Regras"];
+const TABS_VIEW  = ["Ranking","Palpites","Regras"];
+const ADMIN_PASSWORD = "hexa2026";
+
+function initPalpites() {
+  const init = {};
+  JOGOS.forEach(j => { init[j.id] = {}; PARTICIPANTES_DEFAULT.forEach((_,i) => { init[j.id][i] = {mandante:"",visitante:""}; }); });
+  return init;
+}
+function initResultados() {
+  const init = {};
+  JOGOS.forEach(j => { init[j.id] = {mandante:"",visitante:""}; });
+  return init;
+}
+function calcularPontos(palpite, resultado) {
+  if (!resultado || resultado.mandante==="" || resultado.visitante==="") return null;
+  const pm=parseInt(palpite.mandante), pv=parseInt(palpite.visitante);
+  const rm=parseInt(resultado.mandante), rv=parseInt(resultado.visitante);
+  if (isNaN(pm)||isNaN(pv)) return null;
+  if (pm===rm && pv===rv) return PONTUACAO.placar_exato;
+  const pRes = pm>pv?"mandante":pv>pm?"visitante":"empate";
+  const rRes = rm>rv?"mandante":rv>rm?"visitante":"empate";
+  if (pRes!==rRes) return 0;
+  if (pm-pv===rm-rv) return PONTUACAO.vencedor_gols;
+  return PONTUACAO.vencedor;
+}
+
+function ScoreInput({ value, onChange, disabled }) {
+  return (
+    <input type="number" min="0" max="20" value={value}
+      onChange={e => onChange(e.target.value===""?"":parseInt(e.target.value)||0)}
+      disabled={disabled}
+      style={{width:44,height:44,textAlign:"center",fontSize:20,fontWeight:700,
+        border:"2px solid #2d6a4f",borderRadius:8,
+        background:disabled?"#1b3a2d":"#fff",
+        color:disabled?"#4a7c5c":"#1b3a2d",outline:"none",cursor:disabled?"not-allowed":"text"}}
+    />
+  );
+}
+
+function Bolao() {
+  const [loading,    setLoading]    = useState(true);
+  const [loadError,  setLoadError]  = useState(false);
+  const [saving,     setSaving]     = useState(false);
+  const [savedMsg,   setSavedMsg]   = useState(false);
+  const [saveError,  setSaveError]  = useState(false);
+  const [isAdmin,    setIsAdmin]    = useState(false);
+  const [showLogin,  setShowLogin]  = useState(false);
+  const [senhaInput, setSenhaInput] = useState("");
+  const [senhaErro,  setSenhaErro]  = useState(false);
+  const [nomes,      setNomes]      = useState(PARTICIPANTES_DEFAULT);
+  const [tab,        setTab]        = useState("Ranking");
+  const [jogoAtivo,  setJogoAtivo]  = useState(JOGOS[0].id);
+  const [palpites,   setPalpites]   = useState(initPalpites);
+  const [resultados, setResultados] = useState(initResultados);
+  const [editandoNomes, setEditandoNomes] = useState(false);
+
+  // Carregar do JSONBin
+  useEffect(() => {
+    fetch(`${BIN_URL}/latest`, {
+      headers: { "X-Master-Key": API_KEY }
+    })
+    .then(r => r.json())
+    .then(data => {
+      const d = data.record;
+      if (d.nomes)      setNomes(d.nomes);
+      if (d.palpites)   setPalpites(d.palpites);
+      if (d.resultados) setResultados(d.resultados);
+      setLoading(false);
+    })
+    .catch(() => { setLoadError(true); setLoading(false); });
+  }, []);
+
+  // Salvar no JSONBin
+  async function salvar() {
+    setSaving(true);
+    setSaveError(false);
+    try {
+      const res = await fetch(BIN_URL, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "X-Master-Key": API_KEY },
+        body: JSON.stringify({ nomes, palpites, resultados })
+      });
+      if (!res.ok) throw new Error();
+      setSavedMsg(true);
+      setTimeout(() => setSavedMsg(false), 2500);
+    } catch(e) {
+      setSaveError(true);
+      setTimeout(() => setSaveError(false), 3000);
+    }
+    setSaving(false);
+  }
+
+  function tentarLogin() {
+    if (senhaInput === ADMIN_PASSWORD) {
+      setIsAdmin(true); setShowLogin(false); setSenhaInput(""); setSenhaErro(false); setTab("Palpites");
+    } else { setSenhaErro(true); }
+  }
+
+  const jogo  = JOGOS.find(j => j.id === jogoAtivo);
+  const TABS  = isAdmin ? TABS_ADMIN : TABS_VIEW;
+  const ranking = nomes.map((nome, idx) => {
+    let total = 0, exatos = 0;
+    JOGOS.forEach(j => {
+      const res = resultados[j.id], p = palpites[j.id]?.[idx];
+      if (p && p.mandante!=="" && p.visitante!=="" && res && res.mandante!=="" && res.visitante!=="") {
+        const pts = calcularPontos(p, res) || 0; total += pts; if (pts===5) exatos++;
+      }
+    });
+    return { nome, total, exatos };
+  }).sort((a,b) => b.total - a.total || b.exatos - a.exatos);
+
+  const jogosComResultado = JOGOS.filter(j => resultados[j.id]?.mandante!=="" && resultados[j.id]?.visitante!=="").length;
+
+  if (loading) return (
+    <div style={{background:"#0a1f14",minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#a5d6a7",gap:12}}>
+      <div style={{fontSize:32}}>🇧🇷</div>
+      <div style={{fontSize:15}}>Carregando bolão...</div>
+    </div>
+  );
+
+  if (loadError) return (
+    <div style={{background:"#0a1f14",minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#ef9a9a",gap:12,padding:24,textAlign:"center"}}>
+      <div style={{fontSize:32}}>⚠️</div>
+      <div style={{fontSize:15}}>Não foi possível carregar o bolão.</div>
+      <div style={{fontSize:12,color:"#81c784"}}>Verifique sua conexão e recarregue a página.</div>
+      <button onClick={() => window.location.reload()} style={{marginTop:8,padding:"10px 24px",borderRadius:20,background:"#f9a825",border:"none",fontWeight:800,color:"#0a1f14",cursor:"pointer"}}>Tentar novamente</button>
+    </div>
+  );
+
+  return (
+    <div style={{fontFamily:"'Segoe UI',system-ui,sans-serif",minHeight:"100vh",background:"#0a1f14",color:"#e8f5e9"}}>
+
+      {/* Modal login */}
+      {showLogin && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:100,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div style={{background:"#1b3a2d",borderRadius:16,padding:28,width:300,border:"2px solid #f9a825"}}>
+            <div style={{fontWeight:800,fontSize:18,color:"#f9a825",marginBottom:4}}>🔐 Área do Admin</div>
+            <div style={{fontSize:13,color:"#81c784",marginBottom:16}}>Digite a senha para editar palpites e resultados.</div>
+            <input type="password" placeholder="Senha" value={senhaInput}
+              onChange={e=>{setSenhaInput(e.target.value);setSenhaErro(false);}}
+              onKeyDown={e=>e.key==="Enter"&&tentarLogin()}
+              style={{width:"100%",padding:"10px 12px",borderRadius:8,border:senhaErro?"2px solid #ef5350":"2px solid #2d6a4f",background:"#0d2a1a",color:"#e8f5e9",fontSize:15,outline:"none"}}
+              autoFocus />
+            {senhaErro && <div style={{color:"#ef5350",fontSize:12,marginTop:6}}>Senha incorreta.</div>}
+            <div style={{display:"flex",gap:10,marginTop:16}}>
+              <button onClick={()=>{setShowLogin(false);setSenhaInput("");setSenhaErro(false);}} style={{flex:1,padding:"10px 0",borderRadius:8,border:"1px solid #2d6a4f",background:"none",color:"#81c784",fontWeight:700,cursor:"pointer"}}>Cancelar</button>
+              <button onClick={tentarLogin} style={{flex:1,padding:"10px 0",borderRadius:8,border:"none",background:"#f9a825",color:"#0a1f14",fontWeight:800,cursor:"pointer"}}>Entrar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Header */}
+      <div style={{background:"linear-gradient(135deg,#1b4332 0%,#2d6a4f 100%)",padding:"20px 20px 14px",textAlign:"center",borderBottom:"3px solid #f9a825"}}>
+        <div style={{fontSize:32,marginBottom:2}}>🇧🇷</div>
+        <div style={{fontSize:20,fontWeight:800,letterSpacing:1,color:"#f9a825",textTransform:"uppercase"}}>Bolão do Brasil</div>
+        <div style={{fontSize:12,color:"#a5d6a7",marginTop:1}}>Copa do Mundo 2026</div>
+        <div style={{marginTop:10,display:"flex",gap:8,justifyContent:"center",alignItems:"center"}}>
+          {isAdmin ? (
+            <>
+              <span style={{fontSize:12,color:"#69f0ae",fontWeight:700}}>✓ Admin</span>
+              <button onClick={salvar} disabled={saving} style={{padding:"7px 18px",borderRadius:20,fontWeight:800,fontSize:12,background:saveError?"#ef5350":savedMsg?"#69f0ae":"#f9a825",border:"none",cursor:"pointer",color:"#0a1f14",transition:"background 0.3s"}}>
+                {saveError?"Erro ao salvar":savedMsg?"✓ Salvo!":saving?"Salvando...":"💾 Salvar"}
+              </button>
+              <button onClick={()=>{setIsAdmin(false);setTab("Ranking");}} style={{padding:"7px 14px",borderRadius:20,fontWeight:700,fontSize:12,background:"none",border:"1px solid #4a7c5c",color:"#81c784",cursor:"pointer"}}>Sair</button>
+            </>
+          ) : (
+            <button onClick={()=>setShowLogin(true)} style={{padding:"7px 18px",borderRadius:20,fontWeight:700,fontSize:12,background:"none",border:"1px solid #4a7c5c",color:"#81c784",cursor:"pointer"}}>🔐 Admin</button>
+          )}
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div style={{display:"flex",borderBottom:"2px solid #1b4332",background:"#0d2a1a",overflowX:"auto"}}>
+        {TABS.map(t=>(
+          <button key={t} onClick={()=>setTab(t)} style={{flex:1,padding:"11px 4px",fontWeight:700,fontSize:13,whiteSpace:"nowrap",background:"none",border:"none",cursor:"pointer",color:tab===t?"#f9a825":"#81c784",borderBottom:tab===t?"3px solid #f9a825":"3px solid transparent"}}>
+            {t}
+          </button>
+        ))}
+      </div>
+
+      <div style={{maxWidth:600,margin:"0 auto",padding:"16px 12px 40px"}}>
+
+        {/* RANKING */}
+        {tab==="Ranking" && (
+          <div>
+            <div style={{fontSize:12,color:"#81c784",marginBottom:14,textAlign:"center"}}>
+              {jogosComResultado===0?"Nenhum resultado lançado ainda.":`Baseado em ${jogosComResultado} jogo${jogosComResultado>1?"s":""} com resultado.`}
+            </div>
+            {ranking.map((r,i)=>(
+              <div key={i} style={{background:i===0?"linear-gradient(90deg,#1b4332,#1e5c38)":"#1b3a2d",borderRadius:12,padding:"14px 16px",marginBottom:10,border:i===0?"1.5px solid #f9a825":"1px solid #2d6a4f",display:"flex",alignItems:"center",gap:12}}>
+                <div style={{fontSize:20,width:32,textAlign:"center"}}>{i===0?"🥇":i===1?"🥈":i===2?"🥉":`${i+1}º`}</div>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:700,fontSize:16}}>{r.nome}</div>
+                  <div style={{fontSize:11,color:"#69f0ae"}}>{r.exatos} placar{r.exatos!==1?"es":""} exato{r.exatos!==1?"s":""}</div>
+                </div>
+                <div style={{fontWeight:800,fontSize:22,color:i===0?"#f9a825":"#a5d6a7"}}>{r.total}</div>
+                <div style={{fontSize:11,color:"#81c784"}}>pts</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* PALPITES */}
+        {tab==="Palpites" && (
+          <>
+            {isAdmin && (
+              <div style={{background:"#1b3a2d",borderRadius:12,padding:14,marginBottom:14}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                  <span style={{fontWeight:700,fontSize:13,color:"#a5d6a7",textTransform:"uppercase",letterSpacing:1}}>Participantes</span>
+                  <button onClick={()=>setEditandoNomes(!editandoNomes)} style={{background:"#2d6a4f",border:"none",borderRadius:6,color:"#f9a825",fontWeight:700,fontSize:12,padding:"4px 10px",cursor:"pointer"}}>
+                    {editandoNomes?"Feito":"Editar nomes"}
+                  </button>
+                </div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                  {nomes.map((n,i)=>(
+                    editandoNomes
+                      ? <input key={i} value={n} onChange={e=>{const arr=[...nomes];arr[i]=e.target.value;setNomes(arr);}} style={{width:130,padding:"4px 8px",borderRadius:6,border:"1px solid #2d6a4f",background:"#0d2a1a",color:"#e8f5e9",fontSize:13}} />
+                      : <span key={i} style={{background:"#0d2a1a",borderRadius:6,padding:"4px 10px",fontSize:13}}>{n}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div style={{marginBottom:14}}>
+              <div style={{fontSize:11,color:"#81c784",textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>Fase de Grupos</div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {JOGOS.filter(j=>!j.eliminatorio).map(j=>(
+                  <button key={j.id} onClick={()=>setJogoAtivo(j.id)} style={{padding:"7px 12px",borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer",border:"2px solid",borderColor:jogoAtivo===j.id?"#f9a825":"#2d6a4f",background:jogoAtivo===j.id?"#f9a825":"#1b3a2d",color:jogoAtivo===j.id?"#0a1f14":"#a5d6a7"}}>
+                    🇧🇷 x {j.bandeiraVisitante} {j.visitante}
+                  </button>
+                ))}
+              </div>
+              <div style={{fontSize:11,color:"#81c784",textTransform:"uppercase",letterSpacing:1,marginBottom:6,marginTop:12}}>Eliminatórias</div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {JOGOS.filter(j=>j.eliminatorio).map(j=>(
+                  <button key={j.id} onClick={()=>setJogoAtivo(j.id)} style={{padding:"7px 12px",borderRadius:8,fontSize:11,fontWeight:600,cursor:"pointer",border:"2px solid",borderColor:jogoAtivo===j.id?"#f9a825":"#2d6a4f",background:jogoAtivo===j.id?"#f9a825":"#1b3a2d",color:jogoAtivo===j.id?"#0a1f14":"#a5d6a7"}}>
+                    {j.fase}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {jogo && (
+              <div style={{background:"#1b3a2d",borderRadius:16,padding:"14px",marginBottom:16}}>
+                <div style={{fontSize:11,color:"#f9a825",fontWeight:700,textTransform:"uppercase",letterSpacing:1,marginBottom:8}}>{jogo.fase}</div>
+                <div style={{display:"flex",justifyContent:"center",alignItems:"center",gap:10,marginBottom:4}}>
+                  <span style={{fontSize:26}}>{jogo.bandeiraMandante}</span>
+                  <span style={{fontWeight:800,fontSize:17}}>{jogo.mandante}</span>
+                  <span style={{color:"#81c784",fontWeight:700}}>x</span>
+                  <span style={{fontWeight:800,fontSize:17}}>{jogo.visitante}</span>
+                  <span style={{fontSize:26}}>{jogo.bandeiraVisitante}</span>
+                </div>
+                <div style={{textAlign:"center",fontSize:11,color:"#81c784"}}>📅 {jogo.data} · 📍 {jogo.local}</div>
+                {resultados[jogo.id]?.mandante!==""&&resultados[jogo.id]?.visitante!==""&&(
+                  <div style={{marginTop:10,textAlign:"center",fontSize:13,color:"#69f0ae",fontWeight:700}}>
+                    Resultado: {resultados[jogo.id].mandante} x {resultados[jogo.id].visitante}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!isAdmin && <div style={{textAlign:"center",fontSize:12,color:"#4a7c5c",marginBottom:8}}>Palpites registrados pelo admin do bolão.</div>}
+
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              {nomes.map((nome,idx)=>{
+                const p=palpites[jogo.id]?.[idx]||{mandante:"",visitante:""};
+                const res=resultados[jogo.id];
+                const pts=(p.mandante!==""&&p.visitante!==""&&res?.mandante!==""&&res?.visitante!=="")?calcularPontos(p,res):null;
+                const bgPts=pts===5?"#1b5e20":pts===3?"#1a3a0f":pts===1?"#1a2f10":pts===0?"#3a0a0a":"#162c20";
+                return (
+                  <div key={idx} style={{background:bgPts,borderRadius:12,padding:"12px 14px",border:"1px solid #2d6a4f",display:"flex",alignItems:"center",gap:10}}>
+                    <div style={{width:30,height:30,borderRadius:"50%",background:"#2d6a4f",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:13,color:"#f9a825",flexShrink:0}}>
+                      {nome.charAt(0).toUpperCase()}
+                    </div>
+                    <div style={{flex:1,fontSize:14,fontWeight:600}}>{nome}</div>
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <ScoreInput value={p.mandante} disabled={!isAdmin} onChange={v=>setPalpites(prev=>({...prev,[jogo.id]:{...prev[jogo.id],[idx]:{...prev[jogo.id][idx],mandante:v}}}))} />
+                      <span style={{color:"#81c784",fontWeight:700}}>x</span>
+                      <ScoreInput value={p.visitante} disabled={!isAdmin} onChange={v=>setPalpites(prev=>({...prev,[jogo.id]:{...prev[jogo.id],[idx]:{...prev[jogo.id][idx],visitante:v}}}))} />
+                    </div>
+                    {pts!==null&&<div style={{marginLeft:4,fontSize:15,fontWeight:800,color:pts===5?"#69f0ae":pts===3?"#a5d6a7":pts===1?"#fff176":"#ef9a9a",minWidth:34,textAlign:"right"}}>+{pts}</div>}
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+
+        {/* RESULTADOS (admin) */}
+        {tab==="Resultados"&&isAdmin&&(
+          <div>
+            <div style={{fontSize:12,color:"#81c784",marginBottom:14}}>Lance o placar real após cada jogo e clique em 💾 Salvar.</div>
+            {JOGOS.map(j=>{
+              const res=resultados[j.id];
+              const temResultado=res.mandante!==""&&res.visitante!=="";
+              return (
+                <div key={j.id} style={{background:"#1b3a2d",borderRadius:12,padding:"14px",marginBottom:12,border:temResultado?"1.5px solid #69f0ae":"1px solid #2d6a4f"}}>
+                  <div style={{fontSize:11,color:temResultado?"#69f0ae":"#f9a825",fontWeight:700,marginBottom:6}}>{temResultado?"✓ ":""}{j.fase}</div>
+                  <div style={{fontSize:12,color:"#81c784",marginBottom:10}}>📅 {j.data}</div>
+                  <div style={{display:"flex",alignItems:"center",gap:8,justifyContent:"center"}}>
+                    <span style={{fontSize:12,color:"#a5d6a7",minWidth:50,textAlign:"right"}}>{j.mandante} {j.bandeiraMandante}</span>
+                    <ScoreInput value={res.mandante} onChange={v=>setResultados(r=>({...r,[j.id]:{...r[j.id],mandante:v}}))} />
+                    <span style={{color:"#81c784",fontWeight:700}}>x</span>
+                    <ScoreInput value={res.visitante} onChange={v=>setResultados(r=>({...r,[j.id]:{...r[j.id],visitante:v}}))} />
+                    <span style={{fontSize:12,color:"#a5d6a7",minWidth:50}}>{j.bandeiraVisitante} {j.visitante}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* REGRAS */}
+        {tab==="Regras"&&(
+          <div style={{lineHeight:1.7,fontSize:14}}>
+            <div style={{background:"#1b3a2d",borderRadius:14,padding:18,marginBottom:14}}>
+              <div style={{fontWeight:800,fontSize:16,color:"#f9a825",marginBottom:12}}>📋 Regras do Bolão</div>
+              <p style={{color:"#a5d6a7",marginBottom:12}}>O bolão cobre todos os jogos do Brasil na Copa do Mundo 2026. Os palpites são registrados pelo admin antes de cada jogo.</p>
+              <div style={{fontWeight:700,fontSize:13,color:"#69f0ae",marginBottom:8,textTransform:"uppercase",letterSpacing:1}}>Pontuação</div>
+              {[{pontos:5,label:"Placar exato",desc:"Acertou os dois placares certinhos"},{pontos:3,label:"Vencedor + saldo",desc:"Acertou quem ganhou e a diferença de gols"},{pontos:1,label:"Vencedor",desc:"Acertou só quem ganhou (ou empate)"},{pontos:0,label:"Errou",desc:"Não acertou nem o vencedor"}].map(({pontos,label,desc})=>(
+                <div key={label} style={{display:"flex",gap:12,alignItems:"flex-start",marginBottom:10}}>
+                  <div style={{background:pontos===5?"#1b5e20":pontos===3?"#2e7d32":pontos===1?"#558b2f":"#b71c1c",borderRadius:8,minWidth:34,height:34,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:16,color:"#fff",flexShrink:0}}>{pontos}</div>
+                  <div><div style={{fontWeight:700,color:"#e8f5e9"}}>{label}</div><div style={{fontSize:12,color:"#81c784"}}>{desc}</div></div>
+                </div>
+              ))}
+            </div>
+            <div style={{background:"#1b3a2d",borderRadius:14,padding:18,marginBottom:14}}>
+              <div style={{fontWeight:800,fontSize:15,color:"#f9a825",marginBottom:10}}>⚽ Jogos do Brasil</div>
+              {JOGOS.map(j=>(
+                <div key={j.id} style={{borderBottom:"1px solid #2d6a4f",paddingBottom:10,marginBottom:10}}>
+                  <div style={{fontWeight:700,color:"#69f0ae",fontSize:13}}>{j.fase}</div>
+                  <div style={{color:"#e8f5e9",marginTop:2}}>🇧🇷 Brasil x {j.visitante} {j.bandeiraVisitante}</div>
+                  <div style={{fontSize:12,color:"#81c784"}}>📅 {j.data}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{background:"#1b3a2d",borderRadius:14,padding:18}}>
+              <div style={{fontWeight:800,fontSize:15,color:"#f9a825",marginBottom:10}}>📌 Outras regras</div>
+              {["Os palpites devem ser enviados ao admin antes de cada jogo começar.","Nas eliminatórias, palpita-se o resultado no tempo normal + prorrogação (sem pênaltis).","O adversário das oitavas em diante é definido conforme o Brasil avança.","Empate no ranking: desempate pelo maior número de placares exatos.","O campeão do bolão leva o bolo da galera 🏆"].map((r,i)=>(
+                <div key={i} style={{display:"flex",gap:10,marginBottom:10,alignItems:"flex-start"}}>
+                  <span style={{color:"#f9a825",fontWeight:700,flexShrink:0}}>→</span>
+                  <span style={{color:"#a5d6a7",fontSize:13}}>{r}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<Bolao />);
+  </script>
+</body>
+</html>
